@@ -3,18 +3,29 @@ import numpy_financial as npf
 import scipy.stats as stats
 import matplotlib.pyplot as plt
 
-##### This is amateur code. Use at your own risk. #####
-##### Do not use for real investment decisions. #####
+##### This is vibe-coded, amateur spaghetti-code. Use at your own risk! #####
+##### Do NOT use to inform real investment decisions. #####
 ##### No financial advice is given or implied. #####
+##### The author is not responsible for any losses incurred by using this code. #####
+
+
+
+###############################
+##### Set parameters here #####
+###############################
 
 years = 30 # Investment period
 starting_sum = 0 # In €
 monthly_contribution = 500  # In €
 average_return = 7 # In percent
 average_inflation = 2 # In percent
+capital_gains_tax = 27.5 # In percent
+increase_contribution_with_inflation = True # Simulate salary (and thus contribution) increasing with inflation?
 
-# To simulate salary (and thus contribution) increasing with inflation
-increase_contribution_with_inflation = False
+
+###############################
+##### Advanced parameters #####
+###############################
 
 # Instead of using the usual constant average return and inflation rates,
 # do you want to use a more realistic distribution-based approach? (Recommended)
@@ -24,7 +35,7 @@ minimum_return = -50 # In percent
 maximum_return = 40 # In percent
 freedom_return = 0.1    # How far the returns can deviate from the average (lower = more variance)
 
-minimum_inflation = -1 # In percent
+minimum_inflation = -0.5 # In percent
 maximum_inflation = 15 # In percent
 freedom_inflation = 0.5 # How far the returns can deviate from the average (lower = more variance)
 
@@ -32,36 +43,44 @@ force_exact_return = True   # (Recommended) Forces the geometric mean of the sam
 force_exact_inflation = True # (Recommended) Forces the geometric mean of the sampled inflation to exactly equal average_inflation
 fixed_seed = 0          # If non-zero, uses this seed for random number generation (for reproducibility)
 
-def student_t(x, df=2, loc=2, minimum=0, maximum=10):
-    """
-    Student's t-distribution PDF, limited and normalized over [minimum, maximum]
-    df: degrees of freedom
-    loc: center
-    scale: scale parameter
-    """
-    result = stats.t.pdf(x, df, loc=loc)
-    result = np.where((x >= minimum) & (x <= maximum), result, 0)
-    x_norm = np.linspace(minimum, maximum, 10000)
-    norm_vals = stats.t.pdf(x_norm, df, loc=loc)
-    area = np.trapz(norm_vals, x_norm)
-    return result / area
 
-def sample_student_t(n_samples, df=2, loc=2, minimum=0, maximum=10, force_exact=False, fixed_seed=True):
+#########################################################
+###### No more user input required below this line ######
+#########################################################
+
+
+
+
+
+
+
+
+
+
+#################################
+##### Function Definitions ######
+#################################
+
+def sample_student_t(n_samples, df=2, loc=2, minimum=0, maximum=10, force_exact=False, fixed_seed=42):
     """
-    Sample from truncated Student's t-distribution using rejection sampling
+    Vectorized sampling from truncated Student's t-distribution
+    df: degrees of freedom (how much variance there is
+    loc: mean of the distribution
+    minimum: minimum value (truncation)
+    maximum: maximum value (truncation)
+    force_exact: if True, forces the geometric mean of the samples to equal loc
+    fixed_seed: if non-zero, uses it as seed for reproducibility
     """
-    samples = []
     if fixed_seed:
-        np.random.seed(42)
-    x_test = np.linspace(minimum, maximum, n_samples*10)
-    y_test = student_t(x_test, df, loc, minimum, maximum)
-    max_value = np.max(y_test)
+        np.random.seed(fixed_seed)
+    batch_size = int(n_samples * 1.5)  # oversample to ensure enough after filtering
+    samples = []
     while len(samples) < n_samples:
-        x_candidate = np.random.uniform(minimum, maximum)
-        y_candidate = student_t(np.array([x_candidate]), df, loc, minimum, maximum)[0]
-        if np.random.uniform(0, max_value) < y_candidate:
-            samples.append(x_candidate)
-    results = 1 + np.array(samples)/100.
+        raw = stats.t.rvs(df, loc=loc, size=batch_size)
+        filtered = raw[(filtered := (raw >= minimum) & (raw <= maximum))]
+        samples.extend(filtered.tolist())
+    samples = np.array(samples[:n_samples])
+    results = 1 + samples / 100.
     if force_exact:
         results = results * ((1 + loc/100.) / (stats.gmean(results)))
     return results
@@ -133,66 +152,20 @@ def run_investment_simulation():
     total_contributions = np.sum(contributions)
     return portfolio_value, real_value, yearly_returns, yearly_inflation, total_contributions, contributions
 
-def plot_results(portfolio_value, real_value, yearly_returns, yearly_inflation, total_contributions):
-    """Plot the simulation results (yearly steps)"""
-    years_axis = np.arange(len(portfolio_value))
-    
-    plt.figure(figsize=(15, 12))
-    
-    # Portfolio value over time
-    plt.subplot(2, 2, 1)
-    plt.plot(years_axis, portfolio_value, 'b-', linewidth=2, label='Nominal Value')
-    plt.plot(years_axis, real_value, 'r-', linewidth=2, label='Real Value (Inflation-Adjusted)')
-    plt.plot(years_axis, [total_contributions * (i / years) for i in years_axis], 'k--', linewidth=1, label='Total Contributions')
-    plt.title('Portfolio Value Over Time')
-    plt.xlabel('Years')
-    plt.ylabel('Portfolio Value (€)')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
 
-    # Final summary
-    plt.subplot(2, 2, 2)
-    final_nominal = portfolio_value[-1]
-    final_real = real_value[-1]
-    
-    categories = ['Total\nContributions', 'Final Nominal\nValue', 'Final Real\nValue']
-    values = [total_contributions, final_nominal, final_real]
-    colors = ['gray', 'blue', 'red']
-    
-    bars = plt.bar(categories, values, color=colors, alpha=0.7)
-    # Add value labels on bars
-    for bar, value in zip(bars, values):
-        height = bar.get_height()
-        plt.text(bar.get_x() + bar.get_width()/2., height + height*0.01,
-                f'€{value:,.0f}', ha='center', va='bottom')
-    
-    plt.grid(True, alpha=0.3)
-    plt.title('Final Results Summary')
-    plt.ylabel('Value (€)')
-    
-    # Returns distribution
-    plt.subplot(2, 2, 3)
-    plt.hist((yearly_returns - 1) * 100, bins=15, alpha=0.7, color='green', edgecolor='black')
-    plt.title('Distribution of Yearly Returns')
-    plt.xlabel('Yearly Return (%)')
-    plt.ylabel('Frequency')
-    plt.grid(True, alpha=0.3)
-    
-    # Inflation distribution
-    plt.subplot(2, 2, 4)
-    plt.hist((yearly_inflation - 1) * 100, bins=15, alpha=0.7, color='orange', edgecolor='black')
-    plt.title('Distribution of Yearly Inflation')
-    plt.xlabel('Yearly Inflation (%)')
-    plt.ylabel('Frequency')
-    plt.grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    plt.show()
-    
-    return final_nominal, final_real, total_contributions
+
+
+
+
+
+
+
+##################################
+##### Simulation & Plotting ######
+##################################
 
 # Run the investment simulation
-print("Running Better Stonks Calculator...")
+print("Running Calculator...")
 print(f"Initial investment: €{starting_sum:,}")
 print(f"Yearly contribution: €{monthly_contribution * 12:,}")
 print(f"Investment period: {years} years")
@@ -204,31 +177,108 @@ print("-" * 60)
 # Run simulation
 portfolio_values, real_values, returns, inflation_rates, total_contributions, contributions = run_investment_simulation()
 
-# Plot results
-final_nominal, final_real, total_contributions = plot_results(portfolio_values, real_values, returns, inflation_rates, total_contributions)
+# Calculate real contributions before plotting
+real_contributions = [contributions[0]]
+real_factor = 1.0
+for i in range(1, len(contributions)):
+    real_factor *= inflation_rates[i-1] if i-1 < len(inflation_rates) else 1.0
+    real_contributions.append(contributions[i] / real_factor)
+
+# Plotting (no extra function)
+years_axis = np.arange(len(portfolio_values))
+plt.figure(figsize=(15, 12))
+
+# Portfolio value over time
+plt.subplot(2, 2, 1)
+plt.plot(years_axis, portfolio_values, 'b-', linewidth=2, label='Nominal Value')
+plt.plot(years_axis, real_values, 'r-', linewidth=2, label='Real Value (Inflation-Adjusted)')
+plt.plot(years_axis, [total_contributions * (i / years) for i in years_axis], 'k--', linewidth=1, label='Total Contributions (Nominal)')
+plt.plot(years_axis, np.cumsum(real_contributions), 'm--', linewidth=1, label='Total Contributions (Real)')
+plt.title('Portfolio Value Over Time')
+plt.xlabel('Years')
+plt.ylabel('Portfolio Value (€)')
+plt.legend(loc='upper left')
+plt.grid(True, alpha=0.3)
+
+# Add cumulative inflation on a second y-axis
+ax1 = plt.gca()
+
+# Second y-axis for cumulative inflation
+ax2 = ax1.twinx()
+cumulative_inflation = np.cumprod(inflation_rates)
+ax2.plot(years_axis[1:], cumulative_inflation, 'c-', linewidth=2, label='Cumulative Inflation')
+ax2.set_ylabel('Cumulative Inflation Factor')
+ax2.legend(loc='upper right')
+
+# Final summary
+plt.subplot(2, 2, 2)
+final_nominal = portfolio_values[-1]
+final_real = real_values[-1]
+real_after_tax = final_real - (final_nominal - total_contributions) * (capital_gains_tax / 100)
+final_real_contribution_total = np.sum(real_contributions)
+categories = ['Total\nContributions', 'Final Real\nContributions', 'Final Nominal\nValue', 'Final Real\nValue', 'Final Real\nValue After Tax']
+values = [total_contributions, final_real_contribution_total, final_nominal, final_real, real_after_tax]
+colors = ['gray', 'magenta', 'blue', 'red', 'purple']
+bars = plt.bar(categories, values, color=colors, alpha=0.7)
+for bar, value in zip(bars, values):
+    height = bar.get_height()
+    plt.text(bar.get_x() + bar.get_width()/2., height + height*0.01,
+            f'€{value:,.0f}', ha='center', va='bottom')
+plt.grid(True, alpha=0.3)
+plt.title('Final Results Summary')
+plt.ylabel('Value (€)')
+
+# Returns distribution
+plt.subplot(2, 2, 3)
+plt.hist((returns - 1) * 100, bins=15, alpha=0.7, color='green', edgecolor='black')
+plt.title('Distribution of Yearly Returns')
+plt.xlabel('Yearly Return (%)')
+plt.ylabel('Frequency')
+plt.grid(True, alpha=0.3)
+
+# Inflation distribution
+plt.subplot(2, 2, 4)
+plt.hist((inflation_rates - 1) * 100, bins=15, alpha=0.7, color='orange', edgecolor='black')
+plt.title('Distribution of Yearly Inflation')
+plt.xlabel('Yearly Inflation (%)')
+plt.ylabel('Frequency')
+plt.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+
+nominal_tax = (final_nominal - total_contributions) * (capital_gains_tax / 100)
+nominal_after_tax = final_nominal - nominal_tax
+
+real_tax = nominal_tax / np.prod(inflation_rates)
+real_after_tax = final_real - real_tax
 
 # Print final statistics
 print(f"\nFINAL RESULTS AFTER {years} YEARS:")
 print(f"Total contributions: €{total_contributions:,.0f}")
 print(f"Final nominal value: €{final_nominal:,.0f}")
-print(f"Final real value (inflation-adjusted): €{final_real:,.0f}")
-print(f"Nominal gain: €{final_nominal - total_contributions:,.0f}")
-print(f"Real gain: €{final_real - total_contributions:,.0f}")
-print(f"Nominal return multiple: {final_nominal / total_contributions:.2f}x")
-print(f"Real return multiple: {final_real / total_contributions:.2f}x")
+print(f"Nominal tax: €{nominal_tax:,.0f}")
+print(f"Final nominal value after {capital_gains_tax}% tax: €{nominal_after_tax:,.0f}")
+
+print(f"\nFinal real value: €{final_real:,.0f}")
+print(f"Real tax: €{real_tax:,.0f}")
+print(f"Final real value after after {capital_gains_tax}% tax: €{real_after_tax:,.0f}")
 
 # Build cash flow arrays for IRR calculation
-nominal_cash_flows = [-c for c in contributions] 
-nominal_cash_flows[-1] += final_nominal
-nominal_IRR = npf.irr(nominal_cash_flows)
+cash_flows = [-c for c in contributions] 
+cash_flows[-1] += final_nominal
+nominal_IRR = npf.irr(cash_flows)
 
-real_cash_flows = [-c for c in contributions]
-real_cash_flows[-1] += final_real
-real_IRR = npf.irr(real_cash_flows)
+cash_flows[-1] = final_real
+real_IRR = npf.irr(cash_flows)
+
+cash_flows[-1] = real_after_tax
+real_IRR_after_tax = npf.irr(cash_flows)
 
 print("\nANNUALIZED RETURNS:")
 print(f"Nominal IRR: {nominal_IRR * 100:.2f}%")
 print(f"Real IRR: {real_IRR * 100:.2f}%")
+print(f"Real IRR after tax: {real_IRR_after_tax * 100:.2f}%")
 print(f"Average yearly return used: {(stats.gmean(returns)-1) * 100:.2f}%")
 print(f"Average yearly inflation used: {(stats.gmean(inflation_rates)-1) * 100:.2f}%")
 
