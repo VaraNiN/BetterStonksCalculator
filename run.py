@@ -3,22 +3,26 @@ import numpy_financial as npf
 import scipy.stats as stats
 import matplotlib.pyplot as plt
 
-##### This is vibe-coded, amateur spaghetti-code. Use at your own risk! #####
-##### Do NOT use to inform real investment decisions. #####
-##### No financial advice is given or implied. #####
-##### The author is not responsible for any losses incurred by using this code. #####
-
-
-
 ###############################
-##### Set parameters here #####
+# !!! WARNING !!!
+# This is VIBE-CODED, amateur SPAGHETTI-CODE!
+# Use at your own risk!
+# DO NOT use to inform real investment decisions.
+# No financial advice is given or implied.
+# The author is NOT responsible for any losses incurred by using this code.
 ###############################
+
+
+
+#####################################
+##### Set basic parameters here #####
+#####################################
 
 years = 30 # Investment period
 starting_sum = 0 # In €
-monthly_contribution = 500  # In €
-average_return = 7 # In percent
-average_inflation = 2 # In percent
+monthly_contribution = 500  # In € (Info: On the first day, starting_sum + monthly_contribution will be invested)
+average_return = 7 # Annually, in percent
+average_inflation = 2 # Annually, in percent
 capital_gains_tax = 27.5 # In percent
 increase_contribution_with_inflation = True # Simulate salary (and thus contribution) increasing with inflation?
 
@@ -43,6 +47,11 @@ force_exact_return = True   # (Recommended) Forces the geometric mean of the sam
 force_exact_inflation = True # (Recommended) Forces the geometric mean of the sampled inflation to exactly equal average_inflation
 fixed_seed = 0          # If non-zero, uses this seed for random number generation (for reproducibility)
 
+bank_days_per_month = 21    # Number of trading days in a month (for subdividing yearly returns into smaller time steps)
+daily_variance = 10.0    # Variance factor for daily returns (daily variance is already proportional to yearly returns)
+
+# Info: As currently implemented, returns are randomly calculated daily, 
+# but daily inflation is calculated directly from yearly inflation.
 
 #########################################################
 ###### No more user input required below this line ######
@@ -85,6 +94,19 @@ def sample_student_t(n_samples, df=2, loc=2, minimum=0, maximum=10, force_exact=
         results = results * ((1 + loc/100.) / (stats.gmean(results)))
     return results
 
+def subdivide_returns(returns, n_subdivisions, force_exact=True, var=1):
+    """Subdivide yearly returns into smaller time steps using gaussian
+    Each yearly return is split into n_subdivisions, each with mean = returns ** (1/n_subdivisions).
+    For each subdivision, draw a normal sample with that mean and given std.
+    Returns an array of length len(returns) * n_subdivisions.
+    """
+    means = returns ** (1 / n_subdivisions)
+    repeated_means = np.repeat(means, n_subdivisions)
+    subdivided = np.random.normal(loc=repeated_means, scale=np.abs(repeated_means - 1) * var)
+    if force_exact:
+        subdivided = subdivided * ((stats.gmean(returns)**(1/n_subdivisions)) / (stats.gmean(subdivided)))
+    return subdivided
+
 def generate_returns(years):
     """Generate yearly returns using Student's t-distribution"""
     return sample_student_t(
@@ -111,46 +133,58 @@ def generate_inflation(years):
 
 def run_investment_simulation():
     """Run the complete investment simulation (yearly steps)"""
+    days_per_year = 12 * bank_days_per_month
     # Generate random returns and inflation for each year
     if use_distribution_based_returns:
         yearly_returns = generate_returns(years)
         yearly_inflation = generate_inflation(years)
+        daily_returns = subdivide_returns(yearly_returns, days_per_year, force_exact=force_exact_return, var=daily_variance)
     else:
         yearly_returns = np.full(years, 1 + average_return / 100)
         yearly_inflation = np.full(years, 1 + average_inflation / 100)
     
-    # Initialize tracking arrays
-    portfolio_value = np.zeros(years + 1)
-    real_value = np.zeros(years + 1)  # Inflation-adjusted value
-    portfolio_value[0] = starting_sum
-    real_value[0] = starting_sum
     
     # Cumulative inflation factor
     inflation_factor = 1.0
     
     # Track inflation-adjusted yearly contribution
-    current_contribution = monthly_contribution * 12
-    contributions = [starting_sum]  # Track all contributions
+    nominal_value = [starting_sum]
+    real_value = [starting_sum]
+    current_contribution = monthly_contribution
+    nominal_contributions = [starting_sum]
+    real_contributions = [starting_sum]
+    inflation_data = [inflation_factor]
+    actual_yearly_returns = []
     
-    # Run simulation year by year
+    
+    # Run simulation
+    total_day_count = 1
     for year in range(years):
-        # Apply yearly return to current portfolio
-        portfolio_value[year + 1] = portfolio_value[year] * yearly_returns[year]
-        
-        # Add yearly contribution
+        for month in range(12):
+            nominal_value[-1] += current_contribution # Add monthly contribution
+            nominal_contributions.append(current_contribution)
+            real_contributions.append(current_contribution / inflation_factor)
+            for day in range(bank_days_per_month):
+                inflation_factor *= yearly_inflation[year] ** (1 / days_per_year)
+                inflation_data.append(inflation_factor)
+                nominal_value.append(nominal_value[-1] * daily_returns[total_day_count-1])
+                real_value.append(nominal_value[-1] / inflation_factor)
+                total_day_count += 1
+        actual_yearly_returns.append(np.prod(daily_returns[total_day_count - days_per_year - 1: total_day_count - 1]))
+
+
+        # Increase monthly contribution
         if increase_contribution_with_inflation:
             current_contribution *= yearly_inflation[year]
-        portfolio_value[year + 1] += current_contribution
-        contributions.append(current_contribution)
         
         # Update inflation factor
         inflation_factor *= yearly_inflation[year]
 
-        # Calculate real (inflation-adjusted) value
-        real_value[year + 1] = portfolio_value[year + 1] / inflation_factor
-    
-    total_contributions = np.sum(contributions)
-    return portfolio_value, real_value, yearly_returns, yearly_inflation, total_contributions, contributions
+   
+    total_contributions = np.sum(nominal_contributions)
+    return nominal_value, real_value, np.array(actual_yearly_returns), np.array(yearly_inflation), total_contributions, nominal_contributions, real_contributions, inflation_data
+
+
 
 
 
@@ -175,45 +209,45 @@ print(f"Force exact averages: Returns={force_exact_return}, Inflation={force_exa
 print("-" * 60)
 
 # Run simulation
-portfolio_values, real_values, returns, inflation_rates, total_contributions, contributions = run_investment_simulation()
+nominal_value, real_value, yearly_returns, yearly_inflation, total_contributions, nominal_contributions, real_contributions, inflation_data = run_investment_simulation()
 
-# Calculate real contributions before plotting
-real_contributions = [contributions[0]]
-real_factor = 1.0
-for i in range(1, len(contributions)):
-    real_factor *= inflation_rates[i-1] if i-1 < len(inflation_rates) else 1.0
-    real_contributions.append(contributions[i] / real_factor)
+# Build x-axis for plotting
+n_days = len(nominal_value)
+days_axis = np.arange(n_days)
+years_axis = days_axis / (12 * bank_days_per_month)
 
-# Plotting (no extra function)
-years_axis = np.arange(len(portfolio_values))
+# Interpolate cumulative real contributions to daily resolution
+monthly_indices = np.linspace(0, n_days-1, len(real_contributions))
+cum_real_contrib_daily = np.interp(days_axis, monthly_indices, np.cumsum(real_contributions))
+cum_nominal_contrib_daily = np.interp(days_axis, monthly_indices, np.cumsum(nominal_contributions))
+
 plt.figure(figsize=(15, 12))
 
 # Portfolio value over time
 plt.subplot(2, 2, 1)
-plt.plot(years_axis, portfolio_values, 'b-', linewidth=2, label='Nominal Value')
-plt.plot(years_axis, real_values, 'r-', linewidth=2, label='Real Value (Inflation-Adjusted)')
-plt.plot(years_axis, [total_contributions * (i / years) for i in years_axis], 'k--', linewidth=1, label='Total Contributions (Nominal)')
-plt.plot(years_axis, np.cumsum(real_contributions), 'm--', linewidth=1, label='Total Contributions (Real)')
+plt.plot(years_axis, nominal_value, 'b-', linewidth=2, label='Nominal Value')
+plt.plot(years_axis, real_value, 'r-', linewidth=2, label='Real Value (Inflation-Adjusted)')
+plt.plot(years_axis, cum_nominal_contrib_daily, 'k--', linewidth=1, label='Total Contributions (Nominal)')
+plt.plot(years_axis, cum_real_contrib_daily, 'm--', linewidth=1, label='Total Contributions (Real)')
 plt.title('Portfolio Value Over Time')
 plt.xlabel('Years')
 plt.ylabel('Portfolio Value (€)')
 plt.legend(loc='upper left')
 plt.grid(True, alpha=0.3)
+plt.xlim(0, years)
+plt.xticks(np.arange(0, years+1, max(1, years//10)))
 
 # Add cumulative inflation on a second y-axis
 ax1 = plt.gca()
-
-# Second y-axis for cumulative inflation
 ax2 = ax1.twinx()
-cumulative_inflation = np.cumprod(inflation_rates)
-ax2.plot(years_axis[1:], cumulative_inflation, 'c-', linewidth=2, label='Cumulative Inflation')
+ax2.plot(years_axis, inflation_data, 'c-', linewidth=2, label='Cumulative Inflation')
 ax2.set_ylabel('Cumulative Inflation Factor')
 ax2.legend(loc='upper right')
 
 # Final summary
 plt.subplot(2, 2, 2)
-final_nominal = portfolio_values[-1]
-final_real = real_values[-1]
+final_nominal = nominal_value[-1]
+final_real = real_value[-1]
 real_after_tax = final_real - (final_nominal - total_contributions) * (capital_gains_tax / 100)
 final_real_contribution_total = np.sum(real_contributions)
 categories = ['Total\nContributions', 'Final Real\nContributions', 'Final Nominal\nValue', 'Final Real\nValue', 'Final Real\nValue After Tax']
@@ -230,7 +264,7 @@ plt.ylabel('Value (€)')
 
 # Returns distribution
 plt.subplot(2, 2, 3)
-plt.hist((returns - 1) * 100, bins=15, alpha=0.7, color='green', edgecolor='black')
+plt.hist((yearly_returns - 1) * 100, bins=15, alpha=0.7, color='green', edgecolor='black')
 plt.title('Distribution of Yearly Returns')
 plt.xlabel('Yearly Return (%)')
 plt.ylabel('Frequency')
@@ -238,7 +272,7 @@ plt.grid(True, alpha=0.3)
 
 # Inflation distribution
 plt.subplot(2, 2, 4)
-plt.hist((inflation_rates - 1) * 100, bins=15, alpha=0.7, color='orange', edgecolor='black')
+plt.hist((yearly_inflation - 1) * 100, bins=15, alpha=0.7, color='orange', edgecolor='black')
 plt.title('Distribution of Yearly Inflation')
 plt.xlabel('Yearly Inflation (%)')
 plt.ylabel('Frequency')
@@ -250,7 +284,7 @@ plt.show()
 nominal_tax = (final_nominal - total_contributions) * (capital_gains_tax / 100)
 nominal_after_tax = final_nominal - nominal_tax
 
-real_tax = nominal_tax / np.prod(inflation_rates)
+real_tax = nominal_tax / np.prod(inflation_data)
 real_after_tax = final_real - real_tax
 
 # Print final statistics
@@ -265,7 +299,7 @@ print(f"Real tax: €{real_tax:,.0f}")
 print(f"Final real value after after {capital_gains_tax}% tax: €{real_after_tax:,.0f}")
 
 # Build cash flow arrays for IRR calculation
-cash_flows = [-c for c in contributions] 
+cash_flows = [-c for c in nominal_contributions] 
 cash_flows[-1] += final_nominal
 nominal_IRR = npf.irr(cash_flows)
 
@@ -279,7 +313,7 @@ print("\nANNUALIZED RETURNS:")
 print(f"Nominal IRR: {nominal_IRR * 100:.2f}%")
 print(f"Real IRR: {real_IRR * 100:.2f}%")
 print(f"Real IRR after tax: {real_IRR_after_tax * 100:.2f}%")
-print(f"Average yearly return used: {(stats.gmean(returns)-1) * 100:.2f}%")
-print(f"Average yearly inflation used: {(stats.gmean(inflation_rates)-1) * 100:.2f}%")
+print(f"Average yearly return used: {(stats.gmean(yearly_returns)-1) * 100:.2f}%")
+print(f"Average yearly inflation used: {(stats.gmean(yearly_inflation)-1) * 100:.2f}%")
 
 
