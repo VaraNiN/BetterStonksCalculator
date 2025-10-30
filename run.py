@@ -2,17 +2,33 @@ import numpy as np
 import numpy_financial as npf
 import scipy.stats as stats
 import matplotlib.pyplot as plt
+import yfinance as yf
 from tqdm import tqdm
+import os
+import pandas as pd
+from matplotlib.ticker import ScalarFormatter
 
 ###############################
-# !!! WARNING !!!
-# This is VIBE-CODED, amateur SPAGHETTI-CODE!
-# Use at your own risk!
-# DO NOT use to inform real investment decisions.
-# No financial advice is given or implied.
+# !!! WARNING // WARNUNG !!!
+
+# This is amateur CODE and the author has no formal financial training! 
+# Das ist amateur CODE und der Autor hat keine formale finanzielle Ausbildung!
+
+# Use at your own risk! 
+# Benutzen auf eigene Gefahr!
+
+# DO NOT use this code to inform real investment decisions. 
+# Verwenden Sie diesen Code NICHT, um echte Anlageentscheidungen zu treffen.
+
+# No financial advice is given or implied. 
+# Es wird keine Finanzberatung gegeben oder angedeutet.
+
 # The author is NOT responsible for any losses incurred by using this code.
+# Der Autor ist NICHT verantwortlich für Verluste, die durch die Verwendung dieses Codes entstehen.
 ###############################
 
+# Source inflation data: https://www.usinflationcalculator.com/inflation/historical-inflation-rates/
+# Source SP500 data: yfinance (Ticker "^GSPC")
 
 
 #####################################
@@ -22,16 +38,22 @@ from tqdm import tqdm
 years = 30 # Investment period
 starting_sum = 0 # In €
 monthly_contribution = 500  # In €
-average_return = 7 # Annually, in percent
-average_inflation = 2 # Annually, in percent
 capital_gains_tax = 27.5 # In percent
-simulation_iteration = 1000 # Number of simulation iterations (reduce for faster results, increase for smoother results)
+simulation_iteration = 10000 # Number of simulation iterations (reduce for faster results, increase for smoother results)
 increase_contribution_with_inflation = True # Simulate salary (and thus contribution) increasing with inflation?
 
+use_synthetic_data = False # If True, uses synthetic data based on the student_t distribution; if False, uses historical S&P 500 data
+average_return = 7 # Annually, in percent
+average_inflation = 2 # Annually, in percent
 
-###############################
-##### Advanced parameters #####
-###############################
+# If True, scrambles historical data for sample simulation, otherwise uses the last real years. 
+# Always scrambles for histogram simulations.
+scramble_for_sample = False
+
+
+##################################################
+##### Advanced parameters for synthetic data #####
+##################################################
 
 minimum_return = -20    # Daily, in percent (20% is circuit breaker level 3 at NYSE)
 maximum_return = 12     # Daily, in percent (11.58% was largest post WW2 daily increase of S&P 500 (13th Oct 2008))
@@ -119,18 +141,56 @@ def generate_inflation(years, samples_per_year):
         fixed_seed=fixed_seed
     )
 
-def run_investment_simulation(use_distribution_based_returns=False):
-    """Run the complete investment simulation (yearly steps)"""
-    # Generate random returns and inflation for each year
-    if use_distribution_based_returns:
+def run_investment_simulation(use_constant_returns, use_synthetic_data, sp500_years = None, scramble_for_sample = True, inflation_csv_path="inflation.csv"):
+    """
+    Run the complete investment simulation (yearly steps).
+    - If use_constant_returns is True: use constant returns/inflation.
+    - If use_constant_returns is False and use_synthetic_data is True: use Student's t-distribution for returns/inflation.
+    - If use_constant_returns is False and use_synthetic_data is False: use real S&P 500 data (scrambled years) and matching real inflation data from CSV.
+    """
+    if use_constant_returns:
+        daily_returns = np.full(years*bank_days_per_year, (1 + average_return / 100)**(1/bank_days_per_year))
+        yearly_inflation = np.full(years, (1 + average_inflation / 100))
+    elif use_synthetic_data:
         daily_returns = generate_returns(years, bank_days_per_year)
         yearly_inflation = generate_inflation(years, 1)
     else:
-        daily_returns = np.full(years*bank_days_per_year, (1 + average_return / 100)**(1/bank_days_per_year))
-        yearly_inflation = np.full(years, (1 + average_inflation / 100))
+        # Use real S&P 500 data, scramble years
+        if sp500_years is None:
+            raise ValueError("sp500_years must be provided when using real data.")
+        available_years = list(sp500_years.keys())
+        if scramble_for_sample:
+            chosen_years = np.random.choice(available_years, years, replace=True)
+        else:
+            chosen_years = sorted(available_years)[-years:]
+        daily_returns = []
+        for y in chosen_years:
+            closes = sp500_years[y]
+            # Calculate daily returns for the year
+            returns = closes[1:] / closes[:-1]
+            # Pad to bank_days_per_year if needed
+            if len(returns) < bank_days_per_year:
+                returns = np.pad(returns, (0, bank_days_per_year - len(returns)), 'edge')
+            else:
+                returns = returns[:bank_days_per_year]
+            daily_returns.extend(returns)
+        daily_returns = np.array(daily_returns)
+        # Use matching real inflation data from CSV
+        if inflation_csv_path is None:
+            raise ValueError("inflation_csv_path must be provided when using real data.")
+        infl_df = pd.read_csv(inflation_csv_path)
+        infl_aves = pd.to_numeric(infl_df['Ave'].values, errors='coerce')
+        year_to_infl = dict(zip(infl_df['Year'].values, infl_aves))
+        yearly_inflation = []
+        for y in chosen_years:
+            infl = year_to_infl.get(y, np.nan)
+            if np.isnan(infl):
+                infl = average_inflation
+            yearly_inflation.append(1 + infl / 100.0)
+        yearly_inflation = np.array(yearly_inflation)
 
 
-    # Track inflation-adjusted yearly contributions
+    # Tracking variables
     current_contribution = monthly_contribution
     nominal_values = [starting_sum]
     real_values = [starting_sum]
@@ -141,7 +201,7 @@ def run_investment_simulation(use_distribution_based_returns=False):
     inflation_data = [inflation_factor_yearly]
     yearly_returns = np.zeros(years)    
 
-    # Run simulation year by year
+    # Run simulation
     day_index = 0
     for year in range(years):
         for month in range(12):
@@ -155,14 +215,11 @@ def run_investment_simulation(use_distribution_based_returns=False):
                 real_values.append(nominal_values[-1] / inflation_factor_daily)
                 inflation_data.append(inflation_factor_daily)
                 day_index += 1
-
         inflation_factor_yearly *= yearly_inflation[year]
         yearly_returns[year] = np.prod(daily_returns[year*bank_days_per_year:(year+1)*bank_days_per_year])
-
         # Increase monthly contribution with inflation if enabled
         if increase_contribution_with_inflation:
             current_contribution = monthly_contribution * inflation_factor_yearly
-
     return (
         np.array(nominal_values),
         np.array(real_values),
@@ -173,6 +230,28 @@ def run_investment_simulation(use_distribution_based_returns=False):
         np.array(inflation_data)
     )
 
+def get_sp500_history(csv_path='sp500_history.csv', bank_days_per_year=252):
+    """
+    Loads daily closing prices for the S&P 500 from local CSV if available, otherwise downloads from Yahoo Finance and saves to CSV.
+    Splits the data into full years, discarding years with less than (bank_days_per_year - 10) entries.
+    Returns a dict: {year: np.array of daily closes}
+    """
+    if os.path.exists(csv_path):
+        print(f"Loading S&P 500 history from {csv_path}...")
+        df = pd.read_csv(csv_path, parse_dates=['Date'])
+    else:
+        print("Downloading S&P 500 history from Yahoo Finance...")
+        data = yf.download('^GSPC', start='1900-01-01', progress=False)
+        df = data[['Close']].reset_index()
+        df.to_csv(csv_path, index=False)
+        print(f"Saved S&P 500 history to {csv_path}.")
+    df['Year'] = df['Date'].dt.year
+    years_dict = {}
+    for year, group in df.groupby('Year'):
+        closes = pd.to_numeric(group['Close'], errors='coerce').values
+        if len(closes) >= (bank_days_per_year - 10):
+            years_dict[year] = closes
+    return years_dict
 
 
 
@@ -186,15 +265,21 @@ print("Running Calculator...")
 print(f"Initial investment: €{starting_sum:,}")
 print(f"Yearly contribution: €{monthly_contribution * 12:,}")
 print(f"Investment period: {years} years")
-print(f"Expected return: {average_return}% (range: {minimum_return}% to {maximum_return}%)")
-print(f"Expected inflation: {average_inflation}% (range: {minimum_inflation}% to {maximum_inflation}%)")
-print(f"Force exact averages: Returns={force_exact_return}, Inflation={force_exact_inflation}")
+if use_synthetic_data:
+    print("Using synthetic data based on Student's t-distribution.")
+    print(f"Expected return: {average_return}% (range: {minimum_return}% to {maximum_return}%)")
+    print(f"Expected inflation: {average_inflation}% (range: {minimum_inflation}% to {maximum_inflation}%)")
+    print(f"Force exact averages: Returns={force_exact_return}, Inflation={force_exact_inflation}")
+else:
+    print("Using historical S&P 500 data.")
 print("-" * 60)
 
 # Run simulation
-nominal_values, real_values, yearly_returns, yearly_inflation, nominal_contributions, real_contributions, inflation_data = run_investment_simulation(True)
+if not use_synthetic_data:
+    sp500_years = get_sp500_history()
+nominal_values, real_values, yearly_returns, yearly_inflation, nominal_contributions, real_contributions, inflation_data = run_investment_simulation(False, use_synthetic_data, sp500_years=sp500_years, scramble_for_sample=scramble_for_sample)
 # Also get constant interest case for comparison
-const_nominal_values, const_real_values, _, _, _, _, _ = run_investment_simulation(False)
+const_nominal_values, const_real_values, _, _, _, _, _ = run_investment_simulation(True, False)
 
 # Calculate cumulative contributions for plotting
 cum_nominal_contrib = np.cumsum(nominal_contributions)
@@ -214,7 +299,7 @@ cum_real_contrib_daily = np.interp(days_axis, monthly_indices, cum_real_contrib)
 nominal_results = []
 real_after_tax_results = []
 for i in tqdm(range(simulation_iteration), desc="Simulating", ncols=80):
-    sim_nominal_values, sim_real_values, _, sim_yearly_inflation, sim_nominal_contributions, _, _ = run_investment_simulation(True)
+    sim_nominal_values, sim_real_values, _, sim_yearly_inflation, sim_nominal_contributions, _, _ = run_investment_simulation(False, use_synthetic_data, sp500_years=sp500_years if not use_synthetic_data else None)
     sim_total_contributions = np.cumsum(sim_nominal_contributions)[-1]
     sim_final_nominal = sim_nominal_values[-1]
     sim_final_real = sim_real_values[-1]
@@ -297,31 +382,49 @@ plt.ylabel('Frequency')
 plt.grid(True, alpha=0.3)
 
 # New subplot: Histogram of final nominal returns
-plt.subplot(3, 2, 5)
-plt.hist(np.array(nominal_results) / 1e6, bins=20, alpha=0.7, color='blue', edgecolor='black')
-median_nominal = np.median(nominal_results) / 1e6
-plt.axvline(median_nominal, color='black', linestyle='--', linewidth=2, label=f'Median: {median_nominal:.2f} Mio. €')
-plt.title(f'Histogram of Nominal Portfolio Value ({simulation_iteration} Simulations)')
-plt.xlabel('Final Nominal Value (Mio. €)')
-plt.ylabel('Frequency')
-plt.grid(True, alpha=0.3)
-plt.legend()
+ax = plt.subplot(3, 2, 5)
+nominal_results_mio = np.array(nominal_results) #/ 1e6
+min_val = max(nominal_results_mio.min(), 1e-2)
+max_val = nominal_results_mio.max()
+bins = np.logspace(np.log10(min_val), np.log10(max_val), 21)
+hist, bin_edges = np.histogram(nominal_results_mio, bins=bins)
+ax.bar(bin_edges[:-1], hist, width=np.diff(bin_edges), align='edge', alpha=0.7, color='blue', edgecolor='black')
+ax.set_xscale('log')
+formatter = ScalarFormatter()
+formatter.set_scientific(False)
+ax.xaxis.set_major_formatter(formatter)
+median_nominal = np.median(nominal_results) #/ 1e6
+ax.axvline(median_nominal, color='black', linestyle='--', linewidth=2, label=f'Median: {median_nominal:,.0f} €')
+ax.set_title(f'Histogram of Nominal Portfolio Value ({simulation_iteration} Simulations)')
+ax.set_xlabel('Final Nominal Value (€)')
+ax.set_ylabel('Frequency')
+ax.grid(True, alpha=0.3, which='both')
+ax.legend()
 
 # New subplot: Histogram of final real returns after tax
-plt.subplot(3, 2, 6)
-plt.hist(np.array(real_after_tax_results) / 1e6, bins=20, alpha=0.7, color='red', edgecolor='black')
-median_real_after_tax = np.median(real_after_tax_results) / 1e6
-plt.axvline(median_real_after_tax, color='black', linestyle='--', linewidth=2, label=f'Median: {median_real_after_tax:.2f} Mio. €')
-plt.title(f'Histogram of Real Portfolio Value After Tax ({simulation_iteration} Simulations)')
-plt.xlabel('Final Real Value After Tax (Mio. €)')
-plt.ylabel('Frequency')
-plt.grid(True, alpha=0.3)
-plt.legend()
+ax = plt.subplot(3, 2, 6)
+real_after_tax_mio = np.array(real_after_tax_results) #/ 1e6
+min_val = max(real_after_tax_mio.min(), 1e-2)
+max_val = real_after_tax_mio.max()
+bins = np.logspace(np.log10(min_val), np.log10(max_val), 21)
+hist, bin_edges = np.histogram(real_after_tax_mio, bins=bins)
+ax.bar(bin_edges[:-1], hist, width=np.diff(bin_edges), align='edge', alpha=0.7, color='red', edgecolor='black')
+ax.set_xscale('log')
+formatter = ScalarFormatter()
+formatter.set_scientific(False)
+ax.xaxis.set_major_formatter(formatter)
+median_real_after_tax = np.median(real_after_tax_results) #/ 1e6
+ax.axvline(median_real_after_tax, color='black', linestyle='--', linewidth=2, label=f'Median: {median_real_after_tax:,.0f} €')
+ax.set_title(f'Histogram of Real Portfolio Value After Tax ({simulation_iteration} Simulations)')
+ax.set_xlabel('Final Real Value After Tax (€)')
+ax.set_ylabel('Frequency')
+ax.grid(True, alpha=0.3, which='both')
+ax.legend()
 
 plt.tight_layout()
+plt.savefig('simulation_results.png', dpi=300)
 plt.show()
 
-plt.savefig('simulation_results.png', dpi=300)
 
 # Print final statistics
 print(f"\nFINAL RESULTS FOR SAMPLE SIMULATION AFTER {years} YEARS:")
@@ -340,6 +443,7 @@ cash_flows = [-c for c in nominal_contributions]
 cash_flows.append(final_nominal)
 nominal_IRR = (1+npf.irr(cash_flows))**(12)-1
 
+cash_flows = [-c for c in real_contributions]
 cash_flows[-1] = final_real
 real_IRR = (1+npf.irr(cash_flows))**(12)-1
 
