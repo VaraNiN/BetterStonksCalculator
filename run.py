@@ -325,8 +325,14 @@ plt.figure(figsize=(18, 12))
 
 # Portfolio value over time
 ax = plt.subplot(3, 2, 1)
-ax.plot(years_axis, nominal_values, 'b-', linewidth=2, label='Nominal Value (Stochastic)')
-ax.plot(years_axis, real_values, 'r-', linewidth=2, label='Real Value (Stochastic)')
+if use_synthetic_data:
+    string = "Stochastic"
+elif scramble_for_sample:
+    string = "Scrambled Historical"
+else:
+    string = "Historical"
+ax.plot(years_axis, nominal_values, 'b-', linewidth=2, label='Nominal Value (%s)' % string)
+ax.plot(years_axis, real_values, 'r-', linewidth=2, label='Real Value (%s)' % string)
 ax.plot(years_axis, const_nominal_values, 'b:', linewidth=2, label=f'Nominal Value (Constant {average_return}%p.a.)')
 ax.plot(years_axis, const_real_values, 'r:', linewidth=2, label=f'Real Value (Constant {average_return - average_inflation}%p.a.)')
 ax.plot(years_axis, cum_nominal_contrib_daily, 'k--', linewidth=1, label='Total Contributions (Nominal)')
