@@ -194,17 +194,26 @@ def run_investment_simulation(use_constant_returns, use_synthetic_data, ticker_y
             daily_returns.extend(returns)
         daily_returns = np.array(daily_returns)
         # Use matching real inflation data from CSV
-        if inflation_csv_path is None:
-            raise ValueError("inflation_csv_path must be provided when using real data.")
-        infl_df = pd.read_csv(inflation_csv_path)
-        infl_aves = pd.to_numeric(infl_df['Ave'].values, errors='coerce')
-        year_to_infl = dict(zip(infl_df['Year'].values, infl_aves))
         yearly_inflation = []
-        for y in chosen_years:
-            infl = year_to_infl.get(y, np.nan)
-            if np.isnan(infl):
-                infl = average_inflation
-            yearly_inflation.append(1 + infl / 100.0)
+        if inflation_csv_path and os.path.exists(inflation_csv_path):
+            try:
+                infl_df = pd.read_csv(inflation_csv_path)
+                infl_aves = pd.to_numeric(infl_df['Ave'].values, errors='coerce')
+                year_to_infl = dict(zip(infl_df['Year'].values, infl_aves))
+                for y in chosen_years:
+                    infl = year_to_infl.get(y, np.nan)
+                    if np.isnan(infl):
+                        infl = average_inflation
+                    yearly_inflation.append(1 + infl / 100.0)
+            except Exception as e:
+                print(f"Warning: Could not read inflation data from {inflation_csv_path}: {e}")
+                print(f"Using average inflation of {average_inflation}% for all years.")
+                yearly_inflation = [1 + average_inflation / 100.0 for _ in chosen_years]
+        else:
+            if inflation_csv_path:
+                print(f"Warning: Inflation data file not found at {inflation_csv_path}")
+            print(f"Using average inflation of {average_inflation}% for all years.")
+            yearly_inflation = [1 + average_inflation / 100.0 for _ in chosen_years]
         yearly_inflation = np.array(yearly_inflation)
 
 
