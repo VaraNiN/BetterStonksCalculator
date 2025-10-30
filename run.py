@@ -6,7 +6,7 @@ import yfinance as yf
 from tqdm import tqdm
 import os
 import pandas as pd
-from matplotlib.ticker import ScalarFormatter
+from matplotlib.ticker import FuncFormatter
 
 ###############################
 # !!! WARNING // WARNUNG !!!
@@ -39,12 +39,12 @@ years = 30 # Investment period
 starting_sum = 0 # In €
 monthly_contribution = 500  # In €
 capital_gains_tax = 27.5 # In percent
-simulation_iteration = 10000 # Number of simulation iterations (reduce for faster results, increase for smoother results)
+simulation_iteration = 1000 # Number of simulation iterations (reduce for faster results, increase for smoother results)
 increase_contribution_with_inflation = True # Simulate salary (and thus contribution) increasing with inflation?
 
 use_synthetic_data = False # If True, uses synthetic data based on the student_t distribution; if False, uses historical S&P 500 data
-average_return = 7 # Annually, in percent
-average_inflation = 2 # Annually, in percent
+average_return = 7 # Annually, in percent; gets used for constant returns and as target for synthetic data
+average_inflation = 2 # Annually, in percent; gets used for constant inflation and as target for synthetic data
 
 # If True, scrambles historical data for sample simulation, otherwise uses the last real years. 
 # Always scrambles for histogram simulations.
@@ -253,6 +253,18 @@ def get_sp500_history(csv_path='sp500_history.csv', bank_days_per_year=252):
             years_dict[year] = closes
     return years_dict
 
+def custom_log_formatter(x, pos):
+    """
+    Formats the tick label 'x' (the tick value) into a human-readable string.
+    """
+    if x >= 1e6:
+        return f"{int(x / 1e6):,.0f} Mio."
+    elif x >= 1:
+        return f"{int(x):,.0f}"
+    else:
+        # For values less than 1000 or very small numbers
+        return f'{x:g}' # Use generic format
+
 
 
 
@@ -312,30 +324,31 @@ for i in tqdm(range(simulation_iteration), desc="Simulating", ncols=80):
 plt.figure(figsize=(18, 12))
 
 # Portfolio value over time
-plt.subplot(3, 2, 1)
-plt.plot(years_axis, nominal_values / 1e6, 'b-', linewidth=2, label='Nominal Value (Stochastic)')
-plt.plot(years_axis, real_values / 1e6, 'r-', linewidth=2, label='Real Value (Stochastic)')
-plt.plot(years_axis, const_nominal_values / 1e6, 'b:', linewidth=2, label='Nominal Value (Constant)')
-plt.plot(years_axis, const_real_values / 1e6, 'r:', linewidth=2, label='Real Value (Constant)')
-plt.plot(years_axis, cum_nominal_contrib_daily / 1e6, 'k--', linewidth=1, label='Total Contributions (Nominal)')
-plt.plot(years_axis, cum_real_contrib_daily / 1e6, 'm--', linewidth=1, label='Total Contributions (Real)')
-plt.title('Sample Simulation: Portfolio Value Over Time')
-plt.xlabel('Years')
-plt.ylabel('Portfolio Value (Mio. €)')
-plt.legend(loc='upper left')
-plt.grid(True, alpha=0.3)
-plt.xlim(0, years)
-plt.xticks(np.arange(0, years+1, max(1, years//10)))
+ax = plt.subplot(3, 2, 1)
+ax.plot(years_axis, nominal_values, 'b-', linewidth=2, label='Nominal Value (Stochastic)')
+ax.plot(years_axis, real_values, 'r-', linewidth=2, label='Real Value (Stochastic)')
+ax.plot(years_axis, const_nominal_values, 'b:', linewidth=2, label=f'Nominal Value (Constant {average_return}%p.a.)')
+ax.plot(years_axis, const_real_values, 'r:', linewidth=2, label=f'Real Value (Constant {average_return - average_inflation}%p.a.)')
+ax.plot(years_axis, cum_nominal_contrib_daily, 'k--', linewidth=1, label='Total Contributions (Nominal)')
+ax.plot(years_axis, cum_real_contrib_daily, 'm--', linewidth=1, label='Total Contributions (Real)')
+ax.set_title('Sample Simulation: Portfolio Value Over Time')
+ax.set_xlabel('Years')
+ax.set_ylabel('Portfolio Value (€)')
+ax.legend(loc='upper left')
+ax.grid(True, alpha=0.3)
+ax.set_xlim(0, years)
+ax.set_xticks(np.arange(0, years+1, max(1, years//10)))
+formatter = FuncFormatter(custom_log_formatter)
+ax.yaxis.set_major_formatter(formatter)
 
 # Add cumulative inflation on a second y-axis
-ax1 = plt.gca()
-ax2 = ax1.twinx()
+ax2 = ax.twinx()
 ax2.plot(years_axis, (inflation_data-1)*100, 'c-', linewidth=2, label='Cumulative Inflation (%)')
 ax2.set_ylabel('Cumulative Inflation (%)')
 ax2.legend(loc='lower right')
 
 # Final summary
-plt.subplot(3, 2, 2)
+ax = plt.subplot(3, 2, 2)
 final_nominal = nominal_values[-1]
 final_real = real_values[-1]
 total_contributions = cum_nominal_contrib[-1]
@@ -349,10 +362,12 @@ real_tax = nominal_tax / np.prod(yearly_inflation)
 real_after_tax = final_real - real_tax
 
 categories = ['Total Nominal\nContributions', 'Total Real\nContributions', 'Final Nominal\nValue', 'Final Real\nValue', 'Final Real\nValue After Tax']
-values = [total_contributions / 1e6, final_real_contribution_total / 1e6, final_nominal / 1e6, final_real / 1e6, real_after_tax / 1e6]
+values = [total_contributions, final_real_contribution_total, final_nominal, final_real, real_after_tax]
 colors = ['gray', 'magenta', 'blue', 'red', 'purple']
-bars = plt.bar(categories, values, color=colors, alpha=0.7)
-plt.ylim(0, max(values)*1.1)  # Make the plot taller to avoid clipping
+bars = ax.bar(categories, values, color=colors, alpha=0.7)
+ax.set_ylim(0, max(values)*1.1)  # Make the plot taller to avoid clipping
+formatter = FuncFormatter(custom_log_formatter)
+ax.yaxis.set_major_formatter(formatter)
 for bar, raw_value in zip(bars, [total_contributions, final_real_contribution_total, final_nominal, final_real, real_after_tax]):
     height = bar.get_height()
     if raw_value >= 1e9:
@@ -390,8 +405,7 @@ bins = np.logspace(np.log10(min_val), np.log10(max_val), 21)
 hist, bin_edges = np.histogram(nominal_results_mio, bins=bins)
 ax.bar(bin_edges[:-1], hist, width=np.diff(bin_edges), align='edge', alpha=0.7, color='blue', edgecolor='black')
 ax.set_xscale('log')
-formatter = ScalarFormatter()
-formatter.set_scientific(False)
+formatter = FuncFormatter(custom_log_formatter)
 ax.xaxis.set_major_formatter(formatter)
 median_nominal = np.median(nominal_results) #/ 1e6
 ax.axvline(median_nominal, color='black', linestyle='--', linewidth=2, label=f'Median: {median_nominal:,.0f} €')
@@ -410,8 +424,7 @@ bins = np.logspace(np.log10(min_val), np.log10(max_val), 21)
 hist, bin_edges = np.histogram(real_after_tax_mio, bins=bins)
 ax.bar(bin_edges[:-1], hist, width=np.diff(bin_edges), align='edge', alpha=0.7, color='red', edgecolor='black')
 ax.set_xscale('log')
-formatter = ScalarFormatter()
-formatter.set_scientific(False)
+formatter = FuncFormatter(custom_log_formatter)
 ax.xaxis.set_major_formatter(formatter)
 median_real_after_tax = np.median(real_after_tax_results) #/ 1e6
 ax.axvline(median_real_after_tax, color='black', linestyle='--', linewidth=2, label=f'Median: {median_real_after_tax:,.0f} €')
