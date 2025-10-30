@@ -2,11 +2,11 @@ import numpy as np
 import numpy_financial as npf
 import scipy.stats as stats
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
 import yfinance as yf
 from tqdm import tqdm
 import os
 import pandas as pd
-from matplotlib.ticker import FuncFormatter
 
 ###############################
 # !!! WARNING // WARNUNG !!!
@@ -28,23 +28,32 @@ from matplotlib.ticker import FuncFormatter
 ###############################
 
 # Source inflation data: https://www.usinflationcalculator.com/inflation/historical-inflation-rates/
-# Source SP500 data: yfinance (Ticker "^GSPC")
+# Source for stock data: Yahoo Finance via yfinance package
+# Up to date source code: https://github.com/VaraNiN/BetterStonksCalculator
 
 
 #####################################
 ##### Set basic parameters here #####
 #####################################
 
-years = 30 # Investment period
+ticker_symbol = 'SPY'  # Ticker symbol from yfinance (any works, here are some examples):
+#   ^GSPC for S&P 500 index: 98 years of data, but NO DIVIDENDS INCLUDED (and thus wrong total returns!!)
+#   SPY for S&P 500 ETF with dividends: Since 1993
+#   EFA for Developed Markets since 2001
+#   EEM for Emerging Markets since 2003
+#   GC=F for Gold future contracts since 1974
+#   BTC-USD for Bitcoin since 2014
+
+years = 25 # Investment period
 starting_sum = 0 # In €
 monthly_contribution = 500  # In €
 capital_gains_tax = 27.5 # In percent
 simulation_iteration = 1000 # Number of simulation iterations (reduce for faster results, increase for smoother results)
 increase_contribution_with_inflation = True # Simulate salary (and thus contribution) increasing with inflation?
 
-use_synthetic_data = False # If True, uses synthetic data based on the student_t distribution; if False, uses historical S&P 500 data
-average_return = 7 # Annually, in percent; gets used for constant returns and as target for synthetic data
-average_inflation = 2 # Annually, in percent; gets used for constant inflation and as target for synthetic data
+use_constant_returns = False # If True, uses constant returns/inflation, otherwise uses synthetic or historical data
+average_return = 13.06 # Annually, in percent; gets used for constant returns and as target for synthetic data
+average_inflation = 2.56 # Annually, in percent; gets used for constant inflation and as target for synthetic data
 
 # If True, scrambles historical data for sample simulation, otherwise uses the last real years. 
 # Always scrambles for histogram simulations.
@@ -54,6 +63,10 @@ scramble_for_sample = False
 ##################################################
 ##### Advanced parameters for synthetic data #####
 ##################################################
+
+use_synthetic_data = False 
+# If True, uses synthetic data based on the student_t distribution (this is a VERY simplified model!)
+# If False, uses data from ticker_symbol
 
 minimum_return = -20    # Daily, in percent (20% is circuit breaker level 3 at NYSE)
 maximum_return = 12     # Daily, in percent (11.58% was largest post WW2 daily increase of S&P 500 (13th Oct 2008))
@@ -116,7 +129,7 @@ def sample_student_t(years, samples_per_year=252, df=1, ARR=2, minimum=0, maximu
     return results
 
 def generate_returns(years, samples_per_year):
-    """Generate yearly returns using Student's t-distribution"""
+    """Generate returns using Student's t-distribution"""
     return sample_student_t(
         years=years,
         samples_per_year=samples_per_year,
@@ -129,7 +142,7 @@ def generate_returns(years, samples_per_year):
     )
 
 def generate_inflation(years, samples_per_year):
-    """Generate yearly inflation rates using Student's t-distribution"""
+    """Generate inflation rates using Student's t-distribution"""
     return sample_student_t(
         years=years,
         samples_per_year=samples_per_year,
@@ -141,12 +154,12 @@ def generate_inflation(years, samples_per_year):
         fixed_seed=fixed_seed
     )
 
-def run_investment_simulation(use_constant_returns, use_synthetic_data, sp500_years = None, scramble_for_sample = True, inflation_csv_path="inflation.csv"):
+def run_investment_simulation(use_constant_returns, use_synthetic_data, ticker_years = None, scramble_for_sample = True, inflation_csv_path="data/inflation.csv"):
     """
     Run the complete investment simulation (yearly steps).
     - If use_constant_returns is True: use constant returns/inflation.
     - If use_constant_returns is False and use_synthetic_data is True: use Student's t-distribution for returns/inflation.
-    - If use_constant_returns is False and use_synthetic_data is False: use real S&P 500 data (scrambled years) and matching real inflation data from CSV.
+    - If use_constant_returns is False and use_synthetic_data is False: use real historical ticker data (scrambled years) and matching real inflation data from CSV.
     """
     if use_constant_returns:
         daily_returns = np.full(years*bank_days_per_year, (1 + average_return / 100)**(1/bank_days_per_year))
@@ -155,19 +168,24 @@ def run_investment_simulation(use_constant_returns, use_synthetic_data, sp500_ye
         daily_returns = generate_returns(years, bank_days_per_year)
         yearly_inflation = generate_inflation(years, 1)
     else:
-        # Use real S&P 500 data, scramble years
-        if sp500_years is None:
-            raise ValueError("sp500_years must be provided when using real data.")
-        available_years = list(sp500_years.keys())
+        # Use real historical ticker data, scramble years
+        if ticker_years is None:
+            raise ValueError("ticker_years must be provided when using real data.")
+        available_years = list(ticker_years.keys())
+        if len(available_years) < years:
+                print(f"Not enough data in {ticker_symbol}: {years} years required, only {len(available_years)} years available.")
+                exit(1)
         if scramble_for_sample:
-            chosen_years = np.random.choice(available_years, years, replace=True)
+            chosen_years = np.random.choice(available_years, years, replace=False)
         else:
             chosen_years = sorted(available_years)[-years:]
         daily_returns = []
         for y in chosen_years:
-            closes = sp500_years[y]
-            # Calculate daily returns for the year
-            returns = closes[1:] / closes[:-1]
+            year_data = ticker_years[y]
+            closes = year_data['closes']
+            dividends = year_data['dividends']
+            # Calculate daily returns including dividends: (Close[t] + Dividend[t]) / Close[t-1]
+            returns = (closes[1:] + dividends[1:]) / closes[:-1]
             # Pad to bank_days_per_year if needed
             if len(returns) < bank_days_per_year:
                 returns = np.pad(returns, (0, bank_days_per_year - len(returns)), 'edge')
@@ -209,7 +227,7 @@ def run_investment_simulation(use_constant_returns, use_synthetic_data, sp500_ye
             nominal_contributions.append(current_contribution)
             real_contributions.append(nominal_contributions[-1] / inflation_factor_yearly)
             for day in range(bank_days_per_month):
-                # Apply correct daily return to current portfolio
+                # Apply daily return to current portfolio
                 inflation_factor_daily *= yearly_inflation[year]**(1/bank_days_per_year)
                 nominal_values.append(nominal_values[-1] * daily_returns[day_index])
                 real_values.append(nominal_values[-1] / inflation_factor_daily)
@@ -230,40 +248,79 @@ def run_investment_simulation(use_constant_returns, use_synthetic_data, sp500_ye
         np.array(inflation_data)
     )
 
-def get_sp500_history(csv_path='sp500_history.csv', bank_days_per_year=252):
+def get_ticker_history(ticker_symbol, bank_days_per_year=252):
     """
-    Loads daily closing prices for the S&P 500 from local CSV if available, otherwise downloads from Yahoo Finance and saves to CSV.
+    Loads daily closing prices and dividends for a ticker from local CSV if available, otherwise downloads from Yahoo Finance and saves to CSV.
     Splits the data into full years, discarding years with less than (bank_days_per_year - 10) entries.
-    Returns a dict: {year: np.array of daily closes}
+    Returns a dict: {year: {'closes': np.array, 'dividends': np.array}}
     """
+    # Create data directory if it doesn't exist
+    data_dir = 'data'
+    os.makedirs(data_dir, exist_ok=True)
+    
+    # Create a safe filename from the ticker symbol
+    safe_ticker = ticker_symbol.replace('^', '').replace('/', '_')
+    csv_path = os.path.join(data_dir, f'{safe_ticker}_history.csv')
+    
     if os.path.exists(csv_path):
-        print(f"Loading S&P 500 history from {csv_path}...")
+        print(f"Loading {ticker_symbol} history from {csv_path}...")
         df = pd.read_csv(csv_path, parse_dates=['Date'])
     else:
-        print("Downloading S&P 500 history from Yahoo Finance...")
-        data = yf.download('^GSPC', start='1900-01-01', progress=False)
-        df = data[['Close']].reset_index()
+        print(f"Downloading {ticker_symbol} history from Yahoo Finance...")
+        data = yf.download(ticker_symbol, start='1900-01-01', progress=False, actions=True)
+        # Include Close and Dividends columns
+        if 'Dividends' in data.columns:
+            df = data[['Close', 'Dividends']].reset_index()
+        else:
+            df = data[['Close']].reset_index()
+            df['Dividends'] = 0.0
         df.to_csv(csv_path, index=False)
-        print(f"Saved S&P 500 history to {csv_path}.")
+        print(f"Saved {ticker_symbol} history to {csv_path}.")
+    
+    # Ensure Dividends column exists
+    if 'Dividends' not in df.columns:
+        df['Dividends'] = 0.0
+    
     df['Year'] = df['Date'].dt.year
     years_dict = {}
     for year, group in df.groupby('Year'):
-        closes = pd.to_numeric(group['Close'], errors='coerce').values
+        closes = group['Close'].values
+        dividends = group['Dividends'].values
+        # Convert to float, handling any potential string values
+        closes = np.array([float(np.asarray(x).item()) if not pd.isna(x) else np.nan for x in closes])
+        dividends = np.array([float(np.asarray(x).item()) if not pd.isna(x) else 0.0 for x in dividends])
+        # Remove NaN values (keep indices synchronized)
+        valid_indices = ~np.isnan(closes)
+        closes = closes[valid_indices]
+        dividends = dividends[valid_indices]
         if len(closes) >= (bank_days_per_year - 10):
-            years_dict[year] = closes
+            years_dict[year] = {'closes': closes, 'dividends': dividends}
     return years_dict
 
 def custom_log_formatter(x, pos):
     """
     Formats the tick label 'x' (the tick value) into a human-readable string.
+    Handles both regular numbers and scientific notation from matplotlib.
     """
-    if x >= 1e6:
-        return f"{int(x / 1e6):,.0f} Mio."
-    elif x >= 1:
-        return f"{int(x):,.0f}"
+    # Convert to float to handle any potential type issues
+    try:
+        x = float(x)
+    except (ValueError, TypeError):
+        return str(x)
+    
+    if abs(x) >= 1e5 and abs(x) < 1e9:
+        if abs(x/1e5 - round(x/1e5)) < 0.01:
+            # It's close to a whole number
+            return f"{x/1e6:,.1f} Mio."
+        else:
+            return f"{int(x):,}"
+    elif abs(x) >= 1e8 and abs(x) < 1e12:
+        return f"{x/1e9:,.1f} Mrd."
+    elif abs(x) >= 1:
+        return f"{int(x):,}"
     else:
-        # For values less than 1000 or very small numbers
-        return f'{x:g}' # Use generic format
+        # For values less than 1
+        return f'{x:g}'
 
 
 
@@ -283,13 +340,13 @@ if use_synthetic_data:
     print(f"Expected inflation: {average_inflation}% (range: {minimum_inflation}% to {maximum_inflation}%)")
     print(f"Force exact averages: Returns={force_exact_return}, Inflation={force_exact_inflation}")
 else:
-    print("Using historical S&P 500 data.")
+    print(f"Using historical {ticker_symbol} data.")
 print("-" * 60)
 
 # Run simulation
 if not use_synthetic_data:
-    sp500_years = get_sp500_history()
-nominal_values, real_values, yearly_returns, yearly_inflation, nominal_contributions, real_contributions, inflation_data = run_investment_simulation(False, use_synthetic_data, sp500_years=sp500_years, scramble_for_sample=scramble_for_sample)
+    ticker_years = get_ticker_history(ticker_symbol)
+nominal_values, real_values, yearly_returns, yearly_inflation, nominal_contributions, real_contributions, inflation_data = run_investment_simulation(use_constant_returns, use_synthetic_data, ticker_years=ticker_years, scramble_for_sample=scramble_for_sample)
 # Also get constant interest case for comparison
 const_nominal_values, const_real_values, _, _, _, _, _ = run_investment_simulation(True, False)
 
@@ -311,7 +368,7 @@ cum_real_contrib_daily = np.interp(days_axis, monthly_indices, cum_real_contrib)
 nominal_results = []
 real_after_tax_results = []
 for i in tqdm(range(simulation_iteration), desc="Simulating", ncols=80):
-    sim_nominal_values, sim_real_values, _, sim_yearly_inflation, sim_nominal_contributions, _, _ = run_investment_simulation(False, use_synthetic_data, sp500_years=sp500_years if not use_synthetic_data else None)
+    sim_nominal_values, sim_real_values, _, sim_yearly_inflation, sim_nominal_contributions, _, _ = run_investment_simulation(False, use_synthetic_data, ticker_years=ticker_years if not use_synthetic_data else None)
     sim_total_contributions = np.cumsum(sim_nominal_contributions)[-1]
     sim_final_nominal = sim_nominal_values[-1]
     sim_final_real = sim_real_values[-1]
@@ -323,6 +380,13 @@ for i in tqdm(range(simulation_iteration), desc="Simulating", ncols=80):
 
 plt.figure(figsize=(18, 12))
 
+# Add main title at the top of the figure
+if use_synthetic_data:
+    main_title = f"Synthetic Data - {years} Year Investment Simulation"
+else:
+    main_title = f"{ticker_symbol} - {years} Year Investment Simulation"
+plt.suptitle(main_title, fontsize=20, fontweight='bold', y=0.995)
+
 # Portfolio value over time
 ax = plt.subplot(3, 2, 1)
 if use_synthetic_data:
@@ -333,8 +397,8 @@ else:
     string = "Historical"
 ax.plot(years_axis, nominal_values, 'b-', linewidth=2, label='Nominal Value (%s)' % string)
 ax.plot(years_axis, real_values, 'r-', linewidth=2, label='Real Value (%s)' % string)
-ax.plot(years_axis, const_nominal_values, 'b:', linewidth=2, label=f'Nominal Value (Constant {average_return}%p.a.)')
-ax.plot(years_axis, const_real_values, 'r:', linewidth=2, label=f'Real Value (Constant {average_return - average_inflation}%p.a.)')
+ax.plot(years_axis, const_nominal_values, 'b:', linewidth=2, label=f'Nominal Value (Constant {average_return:.2f}%p.a. returns)')
+ax.plot(years_axis, const_real_values, 'r:', linewidth=2, label=f'Real Value (Constant {average_inflation:.2f}%p.a. inflation)')
 ax.plot(years_axis, cum_nominal_contrib_daily, 'k--', linewidth=1, label='Total Contributions (Nominal)')
 ax.plot(years_axis, cum_real_contrib_daily, 'm--', linewidth=1, label='Total Contributions (Real)')
 ax.set_title('Sample Simulation: Portfolio Value Over Time')
@@ -384,7 +448,7 @@ for bar, raw_value in zip(bars, [total_contributions, final_real_contribution_to
             label, ha='center', va='bottom')
 plt.grid(True, alpha=0.3)
 plt.title('Sample Simulation: Results Summary')
-plt.ylabel('Value (Mio. €)')
+plt.ylabel('Value (€)')
 
 # Returns distribution
 plt.subplot(3, 2, 3)
@@ -411,8 +475,16 @@ bins = np.logspace(np.log10(min_val), np.log10(max_val), 21)
 hist, bin_edges = np.histogram(nominal_results_mio, bins=bins)
 ax.bar(bin_edges[:-1], hist, width=np.diff(bin_edges), align='edge', alpha=0.7, color='blue', edgecolor='black')
 ax.set_xscale('log')
+log_min = int(np.floor(np.log10(min_val)))
+log_max = int(np.ceil(np.log10(max_val)))
+ticks = []
+for i in range(log_min, log_max + 1):
+    ticks.extend([10**i, 3 * 10**i])#, 7 * 10**i])
+ticks = [t for t in ticks if min_val <= t <= max_val]
+ax.set_xticks(ticks)
 formatter = FuncFormatter(custom_log_formatter)
 ax.xaxis.set_major_formatter(formatter)
+ax.xaxis.set_minor_formatter(FuncFormatter(lambda x, pos: ''))
 median_nominal = np.median(nominal_results) #/ 1e6
 ax.axvline(median_nominal, color='black', linestyle='--', linewidth=2, label=f'Median: {median_nominal:,.0f} €')
 ax.set_title(f'Histogram of Nominal Portfolio Value ({simulation_iteration} Simulations)')
@@ -430,8 +502,16 @@ bins = np.logspace(np.log10(min_val), np.log10(max_val), 21)
 hist, bin_edges = np.histogram(real_after_tax_mio, bins=bins)
 ax.bar(bin_edges[:-1], hist, width=np.diff(bin_edges), align='edge', alpha=0.7, color='red', edgecolor='black')
 ax.set_xscale('log')
+log_min = int(np.floor(np.log10(min_val)))
+log_max = int(np.ceil(np.log10(max_val)))
+ticks = []
+for i in range(log_min, log_max + 1):
+    ticks.extend([10**i, 3 * 10**i])#, 7 * 10**i])
+ticks = [t for t in ticks if min_val <= t <= max_val]
+ax.set_xticks(ticks)
 formatter = FuncFormatter(custom_log_formatter)
 ax.xaxis.set_major_formatter(formatter)
+ax.xaxis.set_minor_formatter(FuncFormatter(lambda x, pos: ''))
 median_real_after_tax = np.median(real_after_tax_results) #/ 1e6
 ax.axvline(median_real_after_tax, color='black', linestyle='--', linewidth=2, label=f'Median: {median_real_after_tax:,.0f} €')
 ax.set_title(f'Histogram of Real Portfolio Value After Tax ({simulation_iteration} Simulations)')
