@@ -2,6 +2,7 @@ import numpy as np
 import numpy_financial as npf
 import scipy.stats as stats
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 ###############################
 # !!! WARNING !!!
@@ -24,7 +25,8 @@ monthly_contribution = 500  # In €
 average_return = 7 # Annually, in percent
 average_inflation = 2 # Annually, in percent
 capital_gains_tax = 27.5 # In percent
-increase_contribution_with_inflation = False # Simulate salary (and thus contribution) increasing with inflation?
+simulation_iteration = 1000 # Number of simulation iterations (reduce for faster results, increase for smoother results)
+increase_contribution_with_inflation = True # Simulate salary (and thus contribution) increasing with inflation?
 
 
 ###############################
@@ -39,8 +41,8 @@ minimum_inflation = 0 # Yearly, in percent
 maximum_inflation = 15 # Yearly, in percent
 freedom_inflation = 1 # How far the returns can deviate from the average (lower = more variance)
 
-force_exact_return = True   # (Recommended) Forces the geometric mean of the sampled returns to exactly equal average_return
-force_exact_inflation = True # (Recommended) Forces the geometric mean of the sampled inflation to exactly equal average_inflation
+force_exact_return = True   # (Highly Recommended) Forces the geometric mean of the sampled returns to exactly equal average_return
+force_exact_inflation = True # (Highly Recommended) Forces the geometric mean of the sampled inflation to exactly equal average_inflation
 fixed_seed = 0          # If non-zero, uses this seed for random number generation (for reproducibility)
 
 bank_days_per_month = 21  # Trading days in a month (NYSE standard)
@@ -79,7 +81,7 @@ def sample_student_t(years, samples_per_year=252, df=1, ARR=2, minimum=0, maximu
     if fixed_seed:
         np.random.seed(fixed_seed)
     n_samples = years * samples_per_year
-    batch_size = int(n_samples * 1.5)  # oversample to ensure enough after filtering
+    batch_size = int(n_samples * 2.0)  # oversample to ensure enough after filtering
     samples = []
     while len(samples) < n_samples:
         raw = stats.t.rvs(df, loc=(1+ARR)**(1/samples_per_year)-1, size=batch_size)
@@ -208,19 +210,33 @@ monthly_indices = np.linspace(0, n_days-1, len(cum_nominal_contrib))
 cum_nominal_contrib_daily = np.interp(days_axis, monthly_indices, cum_nominal_contrib)
 cum_real_contrib_daily = np.interp(days_axis, monthly_indices, cum_real_contrib)
 
-plt.figure(figsize=(15, 12))
+# Run multiple simulations for histogram analysis
+nominal_results = []
+real_after_tax_results = []
+for i in tqdm(range(simulation_iteration), desc="Simulating", ncols=80):
+    sim_nominal_values, sim_real_values, _, sim_yearly_inflation, sim_nominal_contributions, _, _ = run_investment_simulation(True)
+    sim_total_contributions = np.cumsum(sim_nominal_contributions)[-1]
+    sim_final_nominal = sim_nominal_values[-1]
+    sim_final_real = sim_real_values[-1]
+    sim_nominal_tax = (sim_final_nominal - sim_total_contributions) * (capital_gains_tax / 100)
+    sim_real_tax = sim_nominal_tax / np.prod(sim_yearly_inflation)
+    sim_real_after_tax = sim_final_real - sim_real_tax
+    nominal_results.append(sim_final_nominal)
+    real_after_tax_results.append(sim_real_after_tax)
+
+plt.figure(figsize=(18, 12))
 
 # Portfolio value over time
-plt.subplot(2, 2, 1)
-plt.plot(years_axis, nominal_values, 'b-', linewidth=2, label='Nominal Value (Stochastic)')
-plt.plot(years_axis, real_values, 'r-', linewidth=2, label='Real Value (Stochastic)')
-plt.plot(years_axis, const_nominal_values, 'b:', linewidth=2, label='Nominal Value (Constant)')
-plt.plot(years_axis, const_real_values, 'r:', linewidth=2, label='Real Value (Constant)')
-plt.plot(years_axis, cum_nominal_contrib_daily, 'k--', linewidth=1, label='Total Contributions (Nominal)')
-plt.plot(years_axis, cum_real_contrib_daily, 'm--', linewidth=1, label='Total Contributions (Real)')
-plt.title('Portfolio Value Over Time')
+plt.subplot(3, 2, 1)
+plt.plot(years_axis, nominal_values / 1e6, 'b-', linewidth=2, label='Nominal Value (Stochastic)')
+plt.plot(years_axis, real_values / 1e6, 'r-', linewidth=2, label='Real Value (Stochastic)')
+plt.plot(years_axis, const_nominal_values / 1e6, 'b:', linewidth=2, label='Nominal Value (Constant)')
+plt.plot(years_axis, const_real_values / 1e6, 'r:', linewidth=2, label='Real Value (Constant)')
+plt.plot(years_axis, cum_nominal_contrib_daily / 1e6, 'k--', linewidth=1, label='Total Contributions (Nominal)')
+plt.plot(years_axis, cum_real_contrib_daily / 1e6, 'm--', linewidth=1, label='Total Contributions (Real)')
+plt.title('Sample Simulation: Portfolio Value Over Time')
 plt.xlabel('Years')
-plt.ylabel('Portfolio Value (€)')
+plt.ylabel('Portfolio Value (Mio. €)')
 plt.legend(loc='upper left')
 plt.grid(True, alpha=0.3)
 plt.xlim(0, years)
@@ -231,10 +247,10 @@ ax1 = plt.gca()
 ax2 = ax1.twinx()
 ax2.plot(years_axis, (inflation_data-1)*100, 'c-', linewidth=2, label='Cumulative Inflation (%)')
 ax2.set_ylabel('Cumulative Inflation (%)')
-ax2.legend(loc='upper right')
+ax2.legend(loc='lower right')
 
 # Final summary
-plt.subplot(2, 2, 2)
+plt.subplot(3, 2, 2)
 final_nominal = nominal_values[-1]
 final_real = real_values[-1]
 total_contributions = cum_nominal_contrib[-1]
@@ -248,46 +264,76 @@ real_tax = nominal_tax / np.prod(yearly_inflation)
 real_after_tax = final_real - real_tax
 
 categories = ['Total Nominal\nContributions', 'Total Real\nContributions', 'Final Nominal\nValue', 'Final Real\nValue', 'Final Real\nValue After Tax']
-values = [total_contributions, final_real_contribution_total, final_nominal, final_real, real_after_tax]
+values = [total_contributions / 1e6, final_real_contribution_total / 1e6, final_nominal / 1e6, final_real / 1e6, real_after_tax / 1e6]
 colors = ['gray', 'magenta', 'blue', 'red', 'purple']
 bars = plt.bar(categories, values, color=colors, alpha=0.7)
-for bar, value in zip(bars, values):
+plt.ylim(0, max(values)*1.1)  # Make the plot taller to avoid clipping
+for bar, raw_value in zip(bars, [total_contributions, final_real_contribution_total, final_nominal, final_real, real_after_tax]):
     height = bar.get_height()
+    if raw_value >= 1e9:
+        label = f'{raw_value/1e6:.2f} Mio. €'
+    else:
+        label = f'{raw_value:,.0f} €'
     plt.text(bar.get_x() + bar.get_width()/2., height + height*0.01,
-            f'€{value:,.0f}', ha='center', va='bottom')
+            label, ha='center', va='bottom')
 plt.grid(True, alpha=0.3)
-plt.title('Final Results Summary')
-plt.ylabel('Value (€)')
+plt.title('Sample Simulation: Results Summary')
+plt.ylabel('Value (Mio. €)')
 
 # Returns distribution
-plt.subplot(2, 2, 3)
+plt.subplot(3, 2, 3)
 plt.hist((yearly_returns - 1) * 100, bins=15, alpha=0.7, color='green', edgecolor='black')
-plt.title('Distribution of Yearly Returns')
+plt.title('Sample Simulation: Distribution of Yearly Returns')
 plt.xlabel('Yearly Return (%)')
 plt.ylabel('Frequency')
 plt.grid(True, alpha=0.3)
 
 # Inflation distribution
-plt.subplot(2, 2, 4)
+plt.subplot(3, 2, 4)
 plt.hist((yearly_inflation - 1) * 100, bins=15, alpha=0.7, color='orange', edgecolor='black')
-plt.title('Distribution of Yearly Inflation')
+plt.title('Sample Simulation: Distribution of Yearly Inflation')
 plt.xlabel('Yearly Inflation (%)')
 plt.ylabel('Frequency')
 plt.grid(True, alpha=0.3)
 
+# New subplot: Histogram of final nominal returns
+plt.subplot(3, 2, 5)
+plt.hist(np.array(nominal_results) / 1e6, bins=20, alpha=0.7, color='blue', edgecolor='black')
+median_nominal = np.median(nominal_results) / 1e6
+plt.axvline(median_nominal, color='black', linestyle='--', linewidth=2, label=f'Median: {median_nominal:.2f} Mio. €')
+plt.title(f'Histogram of Nominal Portfolio Value ({simulation_iteration} Simulations)')
+plt.xlabel('Final Nominal Value (Mio. €)')
+plt.ylabel('Frequency')
+plt.grid(True, alpha=0.3)
+plt.legend()
+
+# New subplot: Histogram of final real returns after tax
+plt.subplot(3, 2, 6)
+plt.hist(np.array(real_after_tax_results) / 1e6, bins=20, alpha=0.7, color='red', edgecolor='black')
+median_real_after_tax = np.median(real_after_tax_results) / 1e6
+plt.axvline(median_real_after_tax, color='black', linestyle='--', linewidth=2, label=f'Median: {median_real_after_tax:.2f} Mio. €')
+plt.title(f'Histogram of Real Portfolio Value After Tax ({simulation_iteration} Simulations)')
+plt.xlabel('Final Real Value After Tax (Mio. €)')
+plt.ylabel('Frequency')
+plt.grid(True, alpha=0.3)
+plt.legend()
+
 plt.tight_layout()
 plt.show()
 
+plt.savefig('simulation_results.png', dpi=300)
+
 # Print final statistics
-print(f"\nFINAL RESULTS AFTER {years} YEARS:")
-print(f"Total contributions: €{total_contributions:,.0f}")
+print(f"\nFINAL RESULTS FOR SAMPLE SIMULATION AFTER {years} YEARS:")
+print(f"Total nominal contributions: €{total_contributions:,.0f}")
 print(f"Final nominal value: €{final_nominal:,.0f}")
 print(f"Nominal tax: €{nominal_tax:,.0f}")
 print(f"Final nominal value after {capital_gains_tax}% tax: €{nominal_after_tax:,.0f}")
 
-print(f"\nFinal real value: €{final_real:,.0f}")
+print(f"\nTotal real contributions: €{final_real_contribution_total:,.0f}")
+print(f"Final real value: €{final_real:,.0f}")
 print(f"Real tax: €{real_tax:,.0f}")
-print(f"Final real value after after {capital_gains_tax}% tax: €{real_after_tax:,.0f}")
+print(f"Final real value after {capital_gains_tax}% tax: €{real_after_tax:,.0f}")
 
 # Build cash flow arrays for IRR calculation
 cash_flows = [-c for c in nominal_contributions]
