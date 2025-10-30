@@ -97,8 +97,8 @@ Edit the parameters at the top of `run.py`:
 ```python
 ticker_symbol = 'SPY'              # Stock/ETF ticker symbol
 years = 25                         # Investment period
-starting_sum = 0                   # Initial investment (€)
-monthly_contribution = 500         # Monthly contribution (€)
+starting_sum = 0                   # Initial investment ($)
+monthly_contribution = 500         # Monthly contribution ($)
 capital_gains_tax = 27.5          # Tax rate (%)
 simulation_iteration = 1000        # Number of simulations
 increase_contribution_with_inflation = True  # Adjust contributions for inflation
@@ -137,9 +137,9 @@ The calculator automatically:
 
 ```
 FINAL RESULTS FOR SAMPLE SIMULATION AFTER 25 YEARS:
-Total nominal contributions: €150,000
-Final nominal value: €456,789
-Final real value after tax: €289,123
+Total nominal contributions: $150,000
+Final nominal value: $456,789
+Final real value after tax: $289,123
 
 ANNUALIZED RETURNS:
 Nominal IRR: 8.45%

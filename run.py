@@ -45,8 +45,8 @@ ticker_symbol = 'SPY'  # Ticker symbol from yfinance (any works, here are some e
 #   BTC-USD for Bitcoin since 2014
 
 years = 25 # Investment period
-starting_sum = 0 # In €
-monthly_contribution = 500  # In €
+starting_sum = 0 # In $
+monthly_contribution = 500  # In $
 capital_gains_tax = 27.5 # In percent
 simulation_iteration = 1000 # Number of simulation iterations (reduce for faster results, increase for smoother results)
 increase_contribution_with_inflation = True # Simulate salary (and thus contribution) increasing with inflation?
@@ -340,8 +340,8 @@ def custom_log_formatter(x, pos):
 
 # Run the investment simulation
 print("Running Calculator...")
-print(f"Initial investment: €{starting_sum:,}")
-print(f"Yearly contribution: €{monthly_contribution * 12:,}")
+print(f"Initial investment: ${starting_sum:,}")
+print(f"Yearly contribution: ${monthly_contribution * 12:,}")
 print(f"Investment period: {years} years")
 if use_synthetic_data:
     print("Using synthetic data based on Student's t-distribution.")
@@ -412,7 +412,7 @@ ax.plot(years_axis, cum_nominal_contrib_daily, 'k--', linewidth=1, label='Total 
 ax.plot(years_axis, cum_real_contrib_daily, 'm--', linewidth=1, label='Total Contributions (Real)')
 ax.set_title('Sample Simulation: Portfolio Value Over Time')
 ax.set_xlabel('Years')
-ax.set_ylabel('Portfolio Value (€)')
+ax.set_ylabel('Portfolio Value ($)')
 ax.legend(loc='upper left')
 ax.grid(True, alpha=0.3)
 ax.set_xlim(0, years)
@@ -450,14 +450,14 @@ ax.yaxis.set_major_formatter(formatter)
 for bar, raw_value in zip(bars, [total_contributions, final_real_contribution_total, final_nominal, final_real, real_after_tax]):
     height = bar.get_height()
     if raw_value >= 1e9:
-        label = f'{raw_value/1e6:.2f} Mio. €'
+        label = f'{raw_value/1e6:.2f} Mio. $'
     else:
-        label = f'{raw_value:,.0f} €'
+        label = f'{raw_value:,.0f} $'
     plt.text(bar.get_x() + bar.get_width()/2., height + height*0.01,
             label, ha='center', va='bottom')
 plt.grid(True, alpha=0.3)
 plt.title('Sample Simulation: Results Summary')
-plt.ylabel('Value (€)')
+plt.ylabel('Value ($)')
 
 # Returns distribution
 plt.subplot(3, 2, 3)
@@ -495,9 +495,9 @@ formatter = FuncFormatter(custom_log_formatter)
 ax.xaxis.set_major_formatter(formatter)
 ax.xaxis.set_minor_formatter(FuncFormatter(lambda x, pos: ''))
 median_nominal = np.median(nominal_results) #/ 1e6
-ax.axvline(median_nominal, color='black', linestyle='--', linewidth=2, label=f'Median: {median_nominal:,.0f} €')
+ax.axvline(median_nominal, color='black', linestyle='--', linewidth=2, label=f'Median: {median_nominal:,.0f} $')
 ax.set_title(f'Histogram of Nominal Portfolio Value ({simulation_iteration} Simulations)')
-ax.set_xlabel('Final Nominal Value (€)')
+ax.set_xlabel('Final Nominal Value ($)')
 ax.set_ylabel('Frequency')
 ax.grid(True, alpha=0.3, which='both')
 ax.legend()
@@ -522,9 +522,9 @@ formatter = FuncFormatter(custom_log_formatter)
 ax.xaxis.set_major_formatter(formatter)
 ax.xaxis.set_minor_formatter(FuncFormatter(lambda x, pos: ''))
 median_real_after_tax = np.median(real_after_tax_results) #/ 1e6
-ax.axvline(median_real_after_tax, color='black', linestyle='--', linewidth=2, label=f'Median: {median_real_after_tax:,.0f} €')
+ax.axvline(median_real_after_tax, color='black', linestyle='--', linewidth=2, label=f'Median: {median_real_after_tax:,.0f} $')
 ax.set_title(f'Histogram of Real Portfolio Value After Tax ({simulation_iteration} Simulations)')
-ax.set_xlabel('Final Real Value After Tax (€)')
+ax.set_xlabel('Final Real Value After Tax ($)')
 ax.set_ylabel('Frequency')
 ax.grid(True, alpha=0.3, which='both')
 ax.legend()
@@ -536,15 +536,15 @@ plt.show()
 
 # Print final statistics
 print(f"\nFINAL RESULTS FOR SAMPLE SIMULATION AFTER {years} YEARS:")
-print(f"Total nominal contributions: €{total_contributions:,.0f}")
-print(f"Final nominal value: €{final_nominal:,.0f}")
-print(f"Nominal tax: €{nominal_tax:,.0f}")
-print(f"Final nominal value after {capital_gains_tax}% tax: €{nominal_after_tax:,.0f}")
+print(f"Total nominal contributions: ${total_contributions:,.0f}")
+print(f"Final nominal value: ${final_nominal:,.0f}")
+print(f"Nominal tax: ${nominal_tax:,.0f}")
+print(f"Final nominal value after {capital_gains_tax}% tax: ${nominal_after_tax:,.0f}")
 
-print(f"\nTotal real contributions: €{final_real_contribution_total:,.0f}")
-print(f"Final real value: €{final_real:,.0f}")
-print(f"Real tax: €{real_tax:,.0f}")
-print(f"Final real value after {capital_gains_tax}% tax: €{real_after_tax:,.0f}")
+print(f"\nTotal real contributions: ${final_real_contribution_total:,.0f}")
+print(f"Final real value: ${final_real:,.0f}")
+print(f"Real tax: ${real_tax:,.0f}")
+print(f"Final real value after {capital_gains_tax}% tax: ${real_after_tax:,.0f}")
 
 # Build cash flow arrays for IRR calculation
 cash_flows = [-c for c in nominal_contributions]
