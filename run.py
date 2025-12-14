@@ -44,11 +44,11 @@ ticker_symbol = 'SPY'  # Ticker symbol from yfinance (any works, here are some e
 #   GC=F for Gold future contracts since 1974
 #   BTC-USD for Bitcoin since 2014
 
-years = 25 # Investment period
+years = 15 # Investment period
 starting_sum = 0 # In $
 monthly_contribution = 500  # In $
 capital_gains_tax = 27.5 # In percent
-simulation_iteration = 1000 # Number of simulation iterations (reduce for faster results, increase for smoother results)
+simulation_iteration = int(1e4) # Number of simulation iterations (reduce for faster results, increase for smoother results)
 increase_contribution_with_inflation = True # Simulate salary (and thus contribution) increasing with inflation?
 
 use_constant_returns = False # If True, uses constant returns/inflation, otherwise uses synthetic or historical data
@@ -176,7 +176,7 @@ def run_investment_simulation(use_constant_returns, use_synthetic_data, ticker_y
                 print(f"Not enough data in {ticker_symbol}: {years} years required, only {len(available_years)} years available.")
                 exit(1)
         if scramble_for_sample:
-            chosen_years = np.random.choice(available_years, years, replace=False)
+            chosen_years = np.random.choice(available_years, years, replace=True)
         else:
             chosen_years = sorted(available_years)[-years:]
         daily_returns = []
@@ -495,7 +495,15 @@ formatter = FuncFormatter(custom_log_formatter)
 ax.xaxis.set_major_formatter(formatter)
 ax.xaxis.set_minor_formatter(FuncFormatter(lambda x, pos: ''))
 median_nominal = np.median(nominal_results) #/ 1e6
+percentile_10_nominal = np.percentile(nominal_results, 10)
+percentile_25_nominal = np.percentile(nominal_results, 25)
+percentile_75_nominal = np.percentile(nominal_results, 75)
+percentile_90_nominal = np.percentile(nominal_results, 90)
+ax.axvline(percentile_10_nominal, color='cyan', linestyle=':', linewidth=2, label=f'10th: {percentile_10_nominal:,.0f} $')
+ax.axvline(percentile_25_nominal, color='blue', linestyle='-.', linewidth=2, label=f'25th: {percentile_25_nominal:,.0f} $')
 ax.axvline(median_nominal, color='black', linestyle='--', linewidth=2, label=f'Median: {median_nominal:,.0f} $')
+ax.axvline(percentile_75_nominal, color='blue', linestyle='-.', linewidth=2, label=f'75th: {percentile_75_nominal:,.0f} $')
+ax.axvline(percentile_90_nominal, color='cyan', linestyle=':', linewidth=2, label=f'90th: {percentile_90_nominal:,.0f} $')
 ax.set_title(f'Histogram of Nominal Portfolio Value ({simulation_iteration} Simulations)')
 ax.set_xlabel('Final Nominal Value ($)')
 ax.set_ylabel('Frequency')
@@ -522,7 +530,15 @@ formatter = FuncFormatter(custom_log_formatter)
 ax.xaxis.set_major_formatter(formatter)
 ax.xaxis.set_minor_formatter(FuncFormatter(lambda x, pos: ''))
 median_real_after_tax = np.median(real_after_tax_results) #/ 1e6
+percentile_10_real = np.percentile(real_after_tax_results, 10)
+percentile_25_real = np.percentile(real_after_tax_results, 25)
+percentile_75_real = np.percentile(real_after_tax_results, 75)
+percentile_90_real = np.percentile(real_after_tax_results, 90)
+ax.axvline(percentile_10_real, color='pink', linestyle=':', linewidth=2, label=f'10th: {percentile_10_real:,.0f} $')
+ax.axvline(percentile_25_real, color='red', linestyle='-.', linewidth=2, label=f'25th: {percentile_25_real:,.0f} $')
 ax.axvline(median_real_after_tax, color='black', linestyle='--', linewidth=2, label=f'Median: {median_real_after_tax:,.0f} $')
+ax.axvline(percentile_75_real, color='red', linestyle='-.', linewidth=2, label=f'75th: {percentile_75_real:,.0f} $')
+ax.axvline(percentile_90_real, color='pink', linestyle=':', linewidth=2, label=f'90th: {percentile_90_real:,.0f} $')
 ax.set_title(f'Histogram of Real Portfolio Value After Tax ({simulation_iteration} Simulations)')
 ax.set_xlabel('Final Real Value After Tax ($)')
 ax.set_ylabel('Frequency')
